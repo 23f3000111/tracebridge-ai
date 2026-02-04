@@ -1,260 +1,413 @@
-# TraceBridge AI - PoC Backend (Milestone 1)
+# TraceBridge AI
 
-A lightweight RAG-based SaaS backend for FDA 510(k) documentation gap detection.
+**AI-Powered FDA 510(k) Regulatory Compliance Analysis Platform**
 
-## Overview
+TraceBridge AI uses Retrieval-Augmented Generation (RAG) to analyze medical device submissions against FDA requirements, automatically detecting documentation gaps and predicting Refusal to Accept (RTA) risk.
 
-TraceBridge AI helps medical device companies detect documentation gaps before FDA 510(k) submission. This PoC validates the core RAG pipeline:
+---
 
-- **Multi-document upload** (PDF/DOCX)
-- **Text extraction** with page-level metadata
-- **Intelligent chunking** with overlap
-- **Vector indexing** using in-memory store with persistence
-- **Semantic search** ready for RAG queries (Milestone 2)
+## 🏗️ System Architecture
 
-## Project Structure
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FRONTEND (React + Vite)                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │ Landing  │→ │  Upload  │→ │ Analysis │→ │ Results  │→ │ Remediation  │  │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────────┘  │
+└─────────────────────────────────┬───────────────────────────────────────────┘
+                                  │ HTTP/REST
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           BACKEND (FastAPI + Python)                         │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                         API LAYER (Routers)                          │    │
+│  │  POST /upload    POST /query    POST /gap-report    GET /documents   │    │
+│  └─────────────────────────────────┬───────────────────────────────────┘    │
+│                                    │                                         │
+│  ┌─────────────────────────────────┴───────────────────────────────────┐    │
+│  │                        SERVICE LAYER                                 │    │
+│  │  ┌──────────┐  ┌───────────┐  ┌─────────────┐  ┌────────────────┐  │    │
+│  │  │  Parser  │  │  Chunker  │  │   Indexer   │  │  LLM Service   │  │    │
+│  │  │ PDF/DOCX │  │ 500 chars │  │ Embeddings  │  │ GPT-4 + Guard  │  │    │
+│  │  └──────────┘  └───────────┘  └─────────────┘  └────────────────┘  │    │
+│  │  ┌──────────────────────────────────────────────────────────────┐  │    │
+│  │  │                    Gap Analysis Service                       │  │    │
+│  │  │    FDA Requirements Matching + Severity Classification        │  │    │
+│  │  └──────────────────────────────────────────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────┬───────────────────────────────────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+           ┌──────────────┐            ┌──────────────┐
+           │   ChromaDB   │            │   OpenAI     │
+           │ Vector Store │            │   GPT-4 API  │
+           │ (Embeddings) │            │  (text-gen)  │
+           └──────────────┘            └──────────────┘
+```
+
+---
+
+## 📁 Project Structure
 
 ```
 TraceBridge/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI application
-│   ├── config.py            # Configuration management
-│   ├── models.py            # Pydantic models
+├── app/                        # Backend API
+│   ├── main.py                 # FastAPI app entry
+│   ├── config.py               # Environment settings
+│   ├── models.py               # Pydantic schemas
 │   ├── routers/
-│   │   ├── __init__.py
-│   │   └── documents.py     # Upload/list/delete endpoints
+│   │   ├── documents.py        # /upload, /documents endpoints
+│   │   └── query.py            # /query, /gap-report endpoints
 │   └── services/
-│       ├── __init__.py
-│       ├── parser.py        # PDF/DOCX parsing
-│       ├── chunker.py       # Text chunking
-│       ├── embeddings.py    # Embedding generation
-│       └── vector_store.py  # Vector store operations
-├── data/
-│   └── uploads/             # Uploaded documents
-├── chroma_db/               # Vector database storage
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+│       ├── parser.py           # PDF/DOCX parsing
+│       ├── chunker.py          # Text chunking with overlap
+│       ├── indexer.py          # ChromaDB vector indexing
+│       ├── llm.py              # OpenAI integration + verification
+│       └── gap_analysis.py     # FDA requirement matching
+│
+├── frontend/                   # React Frontend
+│   ├── src/
+│   │   ├── App.jsx             # Router setup
+│   │   ├── index.css           # Design system
+│   │   ├── api/client.js       # Backend API client
+│   │   ├── components/
+│   │   │   ├── Header.jsx
+│   │   │   ├── StepIndicator.jsx
+│   │   │   ├── GapDetailModal.jsx
+│   │   │   └── RemediationPlanModal.jsx
+│   │   └── pages/
+│   │       ├── Landing.jsx
+│   │       ├── Upload.jsx
+│   │       ├── Analysis.jsx
+│   │       ├── Results.jsx
+│   │       └── Documentation.jsx
+│   └── package.json
+│
+├── uploads/                    # Stored uploaded files
+├── chroma_data/               # Vector database storage
+├── .env                       # Environment variables
+├── requirements.txt           # Python dependencies
+└── docker-compose.yml         # Container deployment
 ```
 
-## Quick Start
+---
 
-### 1. Prerequisites
+## 🔄 Data Flow
 
+### 1. Document Upload Flow
+```
+User uploads PDF/DOCX
+        ↓
+[Parser] Extract text from document
+        ↓
+[Chunker] Split into 500-char chunks (100 overlap)
+        ↓
+[Indexer] Generate embeddings via OpenAI
+        ↓
+[ChromaDB] Store vectors with metadata
+        ↓
+Return: doc_id, chunks_indexed, standards_detected
+```
+
+### 2. RAG Query Flow
+```
+User query: "What V&V activities are documented?"
+        ↓
+[Indexer] Semantic search in ChromaDB
+        ↓
+Retrieve top-k relevant chunks
+        ↓
+[LLM Service] Build grounded prompt with context
+        ↓
+[GPT-4] Generate answer citing sources
+        ↓
+[Verification] Check for hallucination
+        ↓
+Return: answer, citations[], fallback_used, verification
+```
+
+### 3. Gap Analysis Flow
+```
+Request: device_name="CardioSense", focus_area="V&V"
+        ↓
+[Gap Service] Load FDA requirements for focus area
+        ↓
+[Indexer] Search user docs for each requirement
+        ↓
+[LLM] Compare and identify gaps
+        ↓
+Classify severity: critical | high | medium | low
+        ↓
+Generate remediation steps
+        ↓
+Return: gaps[], total_gaps, severity_breakdown
+```
+
+---
+
+## 🧠 RAG Implementation Details
+
+### Embedding Strategy
+- **Model**: OpenAI `text-embedding-3-small`
+- **Dimension**: 1536
+- **Fallback**: Sentence Transformers (offline)
+
+### Chunking Strategy
+```python
+chunk_size = 500      # Characters per chunk
+chunk_overlap = 100   # Overlap between chunks
+```
+
+### Retrieval Parameters
+```python
+top_k = 5             # Default chunks to retrieve
+similarity_threshold = 0.7  # Minimum relevance
+```
+
+### Hallucination Mitigation
+1. **Grounded Prompts**: LLM instructed to cite only provided context
+2. **Verification Layer**: Post-generation confidence check
+3. **Fallback Handling**: Falls back to retrieval-only if verification fails
+4. **Citation Tracking**: Every claim must reference source chunk
+
+---
+
+## 🛡️ Regulatory Standards Supported
+
+| Standard | Description |
+|----------|-------------|
+| ISO 10993 | Biocompatibility Testing |
+| IEC 62304 | Medical Device Software |
+| ISO 14971 | Risk Management |
+| ISO 13485 | Quality Management |
+| IEC 60601 | Electrical Safety |
+| 21 CFR Part 820 | FDA Quality System |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
 - Python 3.10+
-- pip
+- Node.js 18+
+- OpenAI API Key
 
-### 2. Setup Environment
-
+### Backend Setup
 ```bash
-# Navigate to project directory
 cd TraceBridge
-
-# Create virtual environment
 python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
+.\venv\Scripts\activate        # Windows
+source venv/bin/activate       # Linux/Mac
 pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env and add your OPENAI_API_KEY
+
+# Start server
+uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Configure Environment Variables
-
+### Frontend Setup
 ```bash
-# If no OpenAI key is provided, local embeddings will be used
+cd frontend
+npm install
+npm run dev
 ```
 
-#### Environment Variables
+### Access
+- **Frontend**: http://localhost:5173
+- **API Docs**: http://localhost:8000/docs
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key for embeddings | None (uses local) |
-| `EMBEDDING_MODEL` | OpenAI embedding model name | `text-embedding-3-small` |
-| `CHROMA_PERSIST_DIR` | Vector store path | `./chroma_db` |
-| `UPLOAD_DIR` | Uploaded files storage | `./data/uploads` |
-| `CHUNK_SIZE` | Maximum chunk size (chars) | `500` |
-| `CHUNK_OVERLAP` | Overlap between chunks | `50` |
+---
 
-### 4. Run the Server
+## 📡 API Reference
 
+### POST /upload
+Upload and index a document.
+
+**Request:**
 ```bash
-# Start development server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+curl -X POST http://localhost:8000/upload \
+  -F "file=@document.pdf" \
+  -F "device_name=CardioSense Pro" \
+  -F "doc_type=vnv"
 ```
 
-The API will be available at:
-- **API**: http://localhost:8000
-- **Swagger Docs**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+**Response:**
+```json
+{
+  "doc_id": "abc123",
+  "filename": "document.pdf",
+  "chunks_indexed": 45,
+  "standards_detected": ["IEC 62304", "ISO 14971"]
+}
+```
 
-## API Endpoints
+### POST /query
+RAG query with citations.
 
-### Health Check
+**Request:**
+```json
+{
+  "query": "What verification tests were performed?",
+  "device_name": "CardioSense Pro",
+  "top_k": 5
+}
+```
 
+**Response:**
+```json
+{
+  "success": true,
+  "answer": "The submission includes...",
+  "citations": [
+    {
+      "chunk_id": "chunk_12",
+      "snippet": "...",
+      "relevance_score": 0.89,
+      "page_number": 5
+    }
+  ],
+  "fallback_used": false
+}
+```
+
+### POST /gap-report
+Generate gap analysis report.
+
+**Request:**
+```json
+{
+  "device_name": "CardioSense Pro",
+  "focus_area": "V&V"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "device_name": "CardioSense Pro",
+  "gaps": [
+    {
+      "category": "V&V",
+      "severity": "critical",
+      "fda_requirement": "Software unit testing",
+      "evidence_found": null,
+      "gap_description": "No unit test documentation",
+      "remediation_steps": ["Add unit test reports"]
+    }
+  ],
+  "total_gaps": 3
+}
+```
+
+---
+
+## 🎨 Frontend Architecture
+
+### Component Hierarchy
+```
+App
+├── Header (navigation)
+├── Routes
+│   ├── Landing (hero + features)
+│   ├── Upload (form + file upload)
+│   ├── Analysis (progress + API calls)
+│   ├── Results (gaps + actions)
+│   └── Documentation (API docs)
+└── Modals
+    ├── GapDetailModal (3-column analysis)
+    └── RemediationPlanModal (saved items)
+```
+
+### State Management
+- **Component State**: React useState for UI
+- **Session Storage**: Persists workflow data between pages
+  - `analysisData`: Device info, doc IDs, standards
+  - `gapReport`: Gap analysis results
+  - `queryResult`: RAG query response
+  - `remediationPlan`: Saved gap items
+  - `acknowledgedGaps`: User acknowledgments
+
+### Design System
+- **Colors**: Primary blue (#1a4b8c), gradient to teal (#00b894)
+- **Typography**: Inter font family
+- **Effects**: Glassmorphism, smooth animations
+- **Responsive**: Mobile-first with breakpoints
+
+---
+
+## 🔒 Security Considerations
+
+1. **API Key Protection**: Never expose OpenAI key to frontend
+2. **File Validation**: Check file types and sizes
+3. **Input Sanitization**: Validate all user inputs
+4. **CORS**: Configured for development origins
+
+---
+
+## 📊 Performance Optimizations
+
+1. **Chunking**: Balanced size for retrieval accuracy
+2. **Vector Indexing**: Persistent ChromaDB storage
+3. **Lazy Loading**: Frontend components loaded on demand
+4. **Session Storage**: Avoid redundant API calls
+
+---
+
+## 🧪 Testing
+
+### Backend
+```bash
+pytest tests/ -v
+```
+
+### API Health Check
 ```bash
 curl http://localhost:8000/health
 ```
 
-Response:
-```json
-{
-  "status": "healthy",
-  "embedding_mode": "local"
-}
-```
+---
 
-### Upload Document
+## 📝 Environment Variables
 
-Upload a PDF or DOCX file for indexing.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENAI_API_KEY` | OpenAI API key | Required |
+| `LLM_MODEL` | GPT model name | gpt-4o-mini |
+| `CHROMA_PERSIST_DIR` | Vector DB path | ./chroma_data |
+| `UPLOAD_DIR` | File storage path | ./uploads |
+| `CHUNK_SIZE` | Characters per chunk | 500 |
+| `CHUNK_OVERLAP` | Overlap size | 100 |
 
-```bash
-# Using curl (Linux/macOS)
-curl -X POST "http://localhost:8000/upload" \
-  -F "file=@your-document.pdf"
+---
 
-# Using PowerShell (Windows)
-$filePath = "C:\path\to\your-document.docx"
-$uri = "http://localhost:8000/upload"
-$boundary = [System.Guid]::NewGuid().ToString()
-$fileBytes = [System.IO.File]::ReadAllBytes($filePath)
-$fileContent = [System.Text.Encoding]::GetEncoding("iso-8859-1").GetString($fileBytes)
-$body = "--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"document.docx`"`r`nContent-Type: application/octet-stream`r`n`r`n$fileContent`r`n--$boundary--`r`n"
-Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $body
-```
+## 🤝 Contributing
 
-Response:
-```json
-{
-  "success": true,
-  "doc_id": "550e8400-e29b-41d4-a716-446655440000",
-  "filename": "your-document.pdf",
-  "chunks_indexed": 42
-}
-```
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing`)
+5. Open Pull Request
 
-### List Documents
+---
 
-Get all uploaded documents.
+## 📄 License
 
-```bash
-# Using curl
-curl http://localhost:8000/documents
+MIT License - See LICENSE file for details.
 
-# Using PowerShell
-Invoke-RestMethod -Uri http://localhost:8000/documents -Method Get
-```
+---
 
-Response:
-```json
-{
-  "documents": [
-    {
-      "doc_id": "550e8400-e29b-41d4-a716-446655440000",
-      "filename": "your-document.pdf",
-      "chunks_indexed": 42,
-      "uploaded_at": "2025-01-31T12:00:00.000000"
-    }
-  ],
-  "total_count": 1
-}
-```
+## 🙏 Acknowledgments
 
-### Delete Document
+- OpenAI for GPT-4 and embeddings
+- ChromaDB for vector storage
+- FastAPI for the backend framework
+- React + Vite for the frontend
 
-Delete a document and its indexed chunks.
+---
 
-```bash
-# Using curl
-curl -X DELETE "http://localhost:8000/documents/{doc_id}"
-
-# Using PowerShell
-Invoke-RestMethod -Uri "http://localhost:8000/documents/{doc_id}" -Method Delete
-```
-
-Response:
-```json
-{
-  "success": true,
-  "doc_id": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "Document deleted successfully",
-  "chunks_deleted": 42
-}
-```
-
-## Embedding Options
-
-### OpenAI Embeddings (Recommended for production)
-
-Set your OpenAI API key in `.env`:
-```
-OPENAI_API_KEY=sk-your-api-key-here
-EMBEDDING_MODEL=text-embedding-3-small
-```
-
-### Local Embeddings (Default, no API key needed)
-
-If no valid OpenAI key is provided, the system automatically uses `sentence-transformers` with the `all-MiniLM-L6-v2` model.
-
-**Note**: First run with local embeddings will download the model (~100MB).
-
-## Vector Store
-
-This PoC uses a simple in-memory vector store with disk persistence (numpy + pickle) for Python 3.14 compatibility. The store:
-
-- Uses cosine similarity for semantic search
-- Persists data to `./chroma_db/vector_store.pkl`
-- Supports filtering by document ID
-- Handles all standard CRUD operations
-
-For production use, consider migrating to:
-- **ChromaDB** (when Python 3.14 binaries are available)
-- **Pinecone** (managed vector database)
-- **Weaviate** (open-source vector database)
-
-## Development
-
-### Running Tests
-
-```bash
-# (Tests will be added in Milestone 2)
-pytest tests/
-```
-
-### Code Structure
-
-- **config.py**: Environment configuration with validation
-- **models.py**: Pydantic models for API request/response
-- **parser.py**: PyMuPDF for PDFs, python-docx for Word files
-- **chunker.py**: Character-based chunking with smart boundary detection
-- **embeddings.py**: Dual support for OpenAI and local embeddings
-- **vector_store.py**: Simple vector store with numpy cosine similarity
-
-## Milestone Status
-
-### ✅ Milestone 1 (Complete)
-- [x] FastAPI scaffold
-- [x] Multi-document upload (PDF/DOCX)
-- [x] Text parsing with page metadata
-- [x] Chunking with overlap
-- [x] Vector indexing
-- [x] GET /documents endpoint
-- [x] DELETE /documents/{doc_id} endpoint
-
-### 🔜 Milestone 2 (Upcoming)
-- [ ] RAG /query endpoint with citations
-- [ ] LLM integration (OpenAI)
-- [ ] Hallucination mitigation
-- [ ] Gap report generation
-- [ ] Dockerfile
-- [ ] Deployment instructions
-
-## License
-
-This is a Proof of Concept project for TraceBridge AI.
+**Built with ❤️ for regulatory compliance professionals**

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # OpenAI Configuration
     openai_api_key: Optional[str] = None
     embedding_model: str = "text-embedding-3-small"
+    llm_model: str = "gpt-4o-mini"
     
     # ChromaDB Configuration
     chroma_persist_dir: str = "./chroma_db"

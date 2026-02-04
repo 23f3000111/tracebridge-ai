@@ -1,37 +1,35 @@
-# Environment
-.env
-.env.local
-
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+
+# Virtual environment
 venv/
 env/
-.venv/
+.env
 
-# Data directories
-data/uploads/
-chroma_db/
+# Uploads and data (keep folder structure)
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/chroma_db/*
+backend/chroma_data/*
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
+
+# Logs
+*.log
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Testing
+# Node modules (frontend)
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Test
 .pytest_cache/
 .coverage
-htmlcov/
-
-# Build
-dist/
-build/
-*.egg-info/

@@ -1,19 +1,16 @@
 services:
   - type: web
-    name: tracebridge-ai
-    runtime: docker
-    plan: free
-    healthCheckPath: /health
+    name: tracebridge-api
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: OPENAI_API_KEY
         sync: false
-      - key: EMBEDDING_MODEL
-        value: text-embedding-3-small
       - key: CHROMA_PERSIST_DIR
-        value: /app/chroma_db
+        value: /tmp/chroma_data
       - key: UPLOAD_DIR
-        value: /app/data/uploads
-      - key: CHUNK_SIZE
-        value: 500
-      - key: CHUNK_OVERLAP
-        value: 50
+        value: /tmp/uploads
+      - key: PYTHONUNBUFFERED
+        value: "1"

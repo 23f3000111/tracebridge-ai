@@ -1,10 +1,10 @@
 """
 TraceBridge AI - Documents Router
-Handles document upload, listing, and deletion.
+Handles document upload, listing, and deletion with extended metadata.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from typing import List
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from typing import List, Optional
 import os
 import uuid
 import shutil
@@ -16,7 +16,8 @@ from app.models import (
     DocumentMetadata,
     DocumentListResponse,
     DeleteResponse,
-    ErrorResponse
+    ErrorResponse,
+    DocType
 )
 from app.services.parser import parse_document
 from app.services.chunker import chunk_document
@@ -27,6 +28,7 @@ from app.services.vector_store import (
     document_exists,
     get_document_chunk_count
 )
+from app.services.metadata_extractor import aggregate_standards_from_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +56,21 @@ def validate_file_type(filename: str) -> bool:
         500: {"model": ErrorResponse, "description": "Processing error"}
     }
 )
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    device_name: str = Form(..., description="Device name (e.g., HeartLink Patch Platform)"),
+    doc_type: str = Form(..., description="Document type: device_description, vnv, biocompatibility, regulatory")
+):
     """
-    Upload a PDF or DOCX document.
+    Upload a PDF or DOCX document with optional metadata.
     
     The document will be:
     1. Saved to the uploads directory
     2. Parsed to extract text
-    3. Chunked with overlap
+    3. Chunked with overlap and metadata extraction
     4. Indexed in the vector database
     
-    Returns the document ID and chunk count.
+    Returns the document ID, chunk count, and detected metadata.
     """
     # Validate file type
     if not file.filename:
@@ -75,6 +81,11 @@ async def upload_document(file: UploadFile = File(...)):
             status_code=400,
             detail=f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
         )
+    
+    # Validate doc_type
+    valid_doc_types = ["device_description", "vnv", "biocompatibility", "regulatory", "other"]
+    if doc_type and doc_type not in valid_doc_types:
+        doc_type = "other"
     
     # Generate unique document ID
     doc_id = str(uuid.uuid4())
@@ -103,10 +114,12 @@ async def upload_document(file: UploadFile = File(...)):
                 detail="Document appears to be empty or could not be parsed"
             )
         
-        # Chunk the document
+        # Chunk the document with metadata extraction
         chunks = chunk_document(
             doc=parsed_doc,
             doc_id=doc_id,
+            device_name=device_name,
+            doc_type=doc_type,
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap
         )
@@ -117,23 +130,33 @@ async def upload_document(file: UploadFile = File(...)):
                 detail="No text content could be extracted from the document"
             )
         
+        # Aggregate detected standards
+        standards_detected = aggregate_standards_from_chunks(
+            [{"standards_referenced": c.metadata.standards_referenced} for c in chunks]
+        )
+        
         # Index chunks in vector store
         chunks_indexed = index_chunks(
             chunks=chunks,
             doc_id=doc_id,
-            filename=file.filename
+            filename=file.filename,
+            device_name=device_name,
+            doc_type=doc_type
         )
         
         logger.info(
             f"Successfully processed document: {file.filename} "
-            f"(doc_id={doc_id}, chunks={chunks_indexed})"
+            f"(doc_id={doc_id}, device={device_name}, type={doc_type}, chunks={chunks_indexed})"
         )
         
         return UploadResponse(
             success=True,
             doc_id=doc_id,
             filename=file.filename,
-            chunks_indexed=chunks_indexed
+            device_name=device_name,
+            doc_type=doc_type,
+            chunks_indexed=chunks_indexed,
+            standards_detected=standards_detected
         )
         
     except HTTPException:
@@ -158,10 +181,10 @@ async def upload_document(file: UploadFile = File(...)):
 )
 async def get_documents():
     """
-    List all uploaded documents.
+    List all uploaded documents with metadata.
     
-    Returns a list of documents with their IDs, filenames, 
-    chunk counts, and upload timestamps.
+    Returns documents with their IDs, filenames, device names,
+    doc types, chunk counts, and upload timestamps.
     """
     try:
         documents = list_documents()
@@ -204,7 +227,7 @@ async def delete_document_endpoint(doc_id: str):
         # Delete from vector store
         chunks_deleted = delete_document(doc_id)
         
-        # Try to delete original file (both .pdf and .docx)
+        # Try to delete original file
         for ext in ALLOWED_EXTENSIONS:
             file_path = os.path.join(settings.upload_dir, f"{doc_id}{ext}")
             if os.path.exists(file_path):

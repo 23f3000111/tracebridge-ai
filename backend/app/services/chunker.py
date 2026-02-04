@@ -1,14 +1,15 @@
 """
 TraceBridge AI - Text Chunking Service
-Handles text chunking with overlap for optimal embedding and retrieval.
+Handles text chunking with overlap and metadata extraction.
 """
 
 from typing import List, Optional
 from uuid import uuid4
 import logging
 
-from app.models import Chunk, ChunkMetadata
+from app.models import Chunk, ChunkMetadata, DocType
 from app.services.parser import ParsedDocument, ParsedPage
+from app.services.metadata_extractor import extract_all_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +72,13 @@ def chunk_text(
             chunks.append(chunk)
         
         # Move start position, accounting for overlap
-        start = end - chunk_overlap
+        new_start = end - chunk_overlap
         
-        # Ensure we make progress
-        if start <= chunks[-1] if chunks else 0:
+        # Ensure we make progress (avoid infinite loop)
+        if new_start <= start:
             start = end
+        else:
+            start = new_start
     
     return chunks
 
@@ -83,15 +86,20 @@ def chunk_text(
 def chunk_document(
     doc: ParsedDocument,
     doc_id: str,
+    device_name: Optional[str] = None,
+    doc_type: DocType = "other",
     chunk_size: int = 500,
     chunk_overlap: int = 50
 ) -> List[Chunk]:
     """
-    Chunk a parsed document while preserving page metadata.
+    Chunk a parsed document while preserving page metadata and extracting
+    standards, requirement IDs, test IDs, and risk IDs.
     
     Args:
         doc: ParsedDocument object
         doc_id: Unique document identifier
+        device_name: Optional device name
+        doc_type: Type of document
         chunk_size: Maximum size of each chunk
         chunk_overlap: Overlap between chunks
         
@@ -115,6 +123,9 @@ def chunk_document(
         for text in text_chunks:
             chunk_id = f"{doc_id}_chunk_{chunk_index}"
             
+            # Extract metadata from chunk text
+            extracted = extract_all_metadata(text)
+            
             chunk = Chunk(
                 text=text,
                 metadata=ChunkMetadata(
@@ -122,7 +133,15 @@ def chunk_document(
                     filename=doc.filename,
                     chunk_id=chunk_id,
                     page_number=page.page_number,
-                    chunk_index=chunk_index
+                    chunk_index=chunk_index,
+                    # Extended metadata
+                    device_name=device_name,
+                    doc_type=doc_type,
+                    standards_referenced=extracted["standards_referenced"],
+                    section_heading=extracted["section_heading"],
+                    requirement_ids=extracted["requirement_ids"],
+                    test_case_ids=extracted["test_case_ids"],
+                    risk_ids=extracted["risk_ids"],
                 )
             )
             
@@ -133,60 +152,5 @@ def chunk_document(
         f"Chunked document '{doc.filename}' (doc_id={doc_id}): "
         f"{len(all_chunks)} chunks from {len(doc.pages)} pages"
     )
-    
-    return all_chunks
-
-
-def chunk_pages_by_page(
-    pages: List[ParsedPage],
-    doc_id: str,
-    filename: str,
-    chunk_size: int = 500,
-    chunk_overlap: int = 50
-) -> List[Chunk]:
-    """
-    Chunk pages while preserving page number metadata for each chunk.
-    This is useful when you want to track which page each chunk came from.
-    
-    Args:
-        pages: List of ParsedPage objects
-        doc_id: Unique document identifier
-        filename: Original filename
-        chunk_size: Maximum size of each chunk
-        chunk_overlap: Overlap between chunks
-        
-    Returns:
-        List of Chunk objects with accurate page metadata
-    """
-    all_chunks = []
-    chunk_index = 0
-    
-    for page in pages:
-        if not page.text or not page.text.strip():
-            continue
-        
-        # Chunk the page text
-        text_chunks = chunk_text(
-            page.text,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
-        )
-        
-        for text in text_chunks:
-            chunk_id = f"{doc_id}_chunk_{chunk_index}"
-            
-            chunk = Chunk(
-                text=text,
-                metadata=ChunkMetadata(
-                    doc_id=doc_id,
-                    filename=filename,
-                    chunk_id=chunk_id,
-                    page_number=page.page_number,
-                    chunk_index=chunk_index
-                )
-            )
-            
-            all_chunks.append(chunk)
-            chunk_index += 1
     
     return all_chunks
